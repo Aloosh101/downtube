@@ -41,8 +41,9 @@ dev = [
 downtube = "downtube.__main__:main"
 
 [project.urls]
-"Homepage"    = "https://github.com/yourusername/downtube"
-"Bug Tracker" = "https://github.com/yourusername/downtube/issues"
+"Homepage"    = "https://github.com/aloosh101/downtube"
+"Source"      = "https://github.com/aloosh101/downtube"
+"Bug Tracker" = "https://github.com/aloosh101/downtube/issues"
 
 [tool.setuptools.packages.find]
 # Auto-discover all packages (core, models, views, controllers, downtube)

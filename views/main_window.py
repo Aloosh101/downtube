@@ -983,10 +983,20 @@ class MainWindow(QMainWindow):
     # ── Window events ──────────────────────────────
 
     def closeEvent(self, event):
-        if self.minimize_to_tray_check.isChecked():
+        if self.minimize_to_tray_check.isChecked() and not getattr(self, "_closing", False):
             event.ignore()
             self.hide()
-        else:
-            self.window_closed.emit()
+            return
+
+        if not getattr(self, "_closing", False):
+            # First pass: signal controller to stop + join all running threads.
+            # This blocks briefly until workers exit cleanly, preventing the
+            # "QThread destroyed while still running" crash (exit code 134).
+            self._closing = True
+            event.ignore()
+            self.window_closed.emit()   # controller calls worker.stop() + wait()
             self.tray_icon.hide()
-            super().closeEvent(event)
+            self.close()                # second pass → falls through to accept below
+        else:
+            # Second pass: all workers are done, exit normally.
+            event.accept()
