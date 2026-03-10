@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "downtube"
+version = "2.0.0"
+description = "A professional YouTube channel archiver with a modern Qt GUI"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Ilya", email = "" }
+]
+keywords = ["youtube", "downloader", "archiver", "yt-dlp", "qt", "pyside6"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Internet",
+]
+dependencies = [
+    "PySide6>=6.6",
+    "yt-dlp>=2024.1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build",
+    "twine",
+]
+
+[project.scripts]
+# This creates the `downtube` command in the terminal after `pip install`
+downtube = "downtube.__main__:main"
+
+[project.urls]
+"Homepage"    = "https://github.com/yourusername/downtube"
+"Bug Tracker" = "https://github.com/yourusername/downtube/issues"
+
+[tool.setuptools.packages.find]
+# Auto-discover all packages (core, models, views, controllers, downtube)
+where   = ["."]
+exclude = ["venv*", "tests*", "*.egg-info"]
+
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.txt", "*.ico", "*.png"]

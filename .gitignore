@@ -1,0 +1,48 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+bin/
+build/
+develop-eggs/
+dist/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.env/
+
+# Project-specific: Ignore actual downloads and database folder
+# By default, downloads go to the base_path. If user keeps it in project dir:
+Downloads/
+Downtube_Downloads/
+.data/
+
+# User settings and local data
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Temporary files
+/tmp/
+test_*.py
+ytdlp_out.json
+*.log
