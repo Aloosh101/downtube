@@ -57,19 +57,27 @@ class DownloadEngine:
         channel_name: str,
         audio_only: bool = False,
         custom_path: str | None = None,
+        res_override: str | None = None,
+        bitrate_override: str | None = None,
     ) -> dict:
         outtmpl = self._outtmpl(channel_name, custom_path)
 
+        # Per-channel resolution override, fallback to global
+        resolution = res_override.split()[0] if res_override else self.max_resolution
+
         if audio_only:
             fmt = self._audio_format_str()
-            postprocessors = self._audio_postprocessors(audio_only=True)
+            postprocessors = self._audio_postprocessors(
+                audio_only=True,
+                bitrate_override=bitrate_override,
+            )
             merge_opts: dict = {}
         else:
             fmt = (
-                f"bestvideo[ext=mp4][height<={self.max_resolution}]"
+                f"bestvideo[ext=mp4][height<={resolution}]"
                 f"+bestaudio[ext=m4a]"
-                f"/bestvideo[height<={self.max_resolution}]+bestaudio"
-                f"/best[height<={self.max_resolution}]"
+                f"/bestvideo[height<={resolution}]+bestaudio"
+                f"/best[height<={resolution}]"
             )
             postprocessors = [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}]
             merge_opts = {"merge_output_format": "mp4"}
@@ -138,11 +146,13 @@ class DownloadEngine:
             return "bestaudio/best"
         return "bestaudio[ext=m4a]/bestaudio/best"
 
-    def _audio_postprocessors(self, audio_only: bool = False) -> list:
+    def _audio_postprocessors(self, audio_only: bool = False, bitrate_override: str | None = None) -> list:
         fmt = self.audio_format.split()[0].lower()
         if fmt == "m4a":
             return []           # native m4a — no conversion needed
-        bitrate = self.audio_bitrate if self.audio_bitrate != "best" else "0"
+        # Per-channel bitrate override
+        effective_bitrate = bitrate_override if bitrate_override and bitrate_override != "channel default" else self.audio_bitrate
+        bitrate = effective_bitrate if effective_bitrate != "best" and effective_bitrate != "best (default)" else "0"
         codec_map = {"mp3": "mp3", "opus": "opus", "flac": "flac"}
         codec = codec_map.get(fmt, "mp3")
         return [{

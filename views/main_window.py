@@ -447,6 +447,90 @@ class AddSingleVideoDialog(QDialog):
         return self.url_input.text().strip(), self.audio_only_check.isChecked()
 
 
+class EditChannelDialog(QDialog):
+    """Dialog to edit existing channel settings (audio mode, path, quality)."""
+    def __init__(self, channel_data: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Edit Channel — {channel_data.get('name', '')}")
+        self.setMinimumWidth(480)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        title = QLabel(f"Edit: {channel_data.get('name', '')}")
+        title.setObjectName("section_title")
+        layout.addWidget(title)
+
+        form = QFormLayout()
+
+        # Audio only toggle
+        self.audio_only_check = QCheckBox("Audio Only  (M4A)")
+        self.audio_only_check.setChecked(channel_data.get("audio_only", 0) == 1)
+        form.addRow("Mode:", self.audio_only_check)
+
+        # Custom path
+        path_row = QHBoxLayout()
+        self.custom_path_input = QLineEdit()
+        self.custom_path_input.setText(channel_data.get("custom_path") or "")
+        self.custom_path_input.setPlaceholderText("Leave empty for default path")
+        path_row.addWidget(self.custom_path_input)
+        btn_browse = QPushButton("…")
+        btn_browse.setFixedWidth(32)
+        btn_browse.clicked.connect(self._browse)
+        path_row.addWidget(btn_browse)
+        form.addRow("Custom Save Path:", path_row)
+
+        # Video quality override
+        self.res_combo = QComboBox()
+        self.res_combo.addItems(["channel default", "2160 (4K)", "1440 (2K)", "1080", "720", "480", "360"])
+        saved_res = channel_data.get("video_quality", "") or "channel default"
+        idx = self.res_combo.findText(saved_res)
+        if idx >= 0:
+            self.res_combo.setCurrentIndex(idx)
+        form.addRow("Video Quality:", self.res_combo)
+
+        # Audio bitrate override
+        self.bitrate_combo = QComboBox()
+        self.bitrate_combo.addItems(["channel default", "320k", "256k", "192k", "128k", "96k"])
+        saved_br = channel_data.get("audio_bitrate", "") or "channel default"
+        idx_b = self.bitrate_combo.findText(saved_br)
+        if idx_b >= 0:
+            self.bitrate_combo.setCurrentIndex(idx_b)
+        form.addRow("Audio Bitrate:", self.bitrate_combo)
+
+        layout.addLayout(form)
+
+        # Info label
+        info = QLabel("💡 Changes apply to future downloads only (pending & new videos).")
+        info.setStyleSheet("color: #7c6af7; font-size: 11px;")
+        layout.addWidget(info)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        ok_btn = QPushButton("Save Changes")
+        ok_btn.setObjectName("btn_primary")
+        ok_btn.clicked.connect(self.accept)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+
+    def _browse(self):
+        d = QFileDialog.getExistingDirectory(self, "Select Download Folder")
+        if d:
+            self.custom_path_input.setText(d)
+
+    def get_data(self) -> dict:
+        return {
+            "audio_only":    self.audio_only_check.isChecked(),
+            "custom_path":   self.custom_path_input.text().strip() or None,
+            "video_quality": self.res_combo.currentText(),
+            "audio_bitrate": self.bitrate_combo.currentText(),
+        }
+
+
 # ─────────────────────────────────────────────
 #  Channel card widget (in the list)
 # ─────────────────────────────────────────────
@@ -660,15 +744,19 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
         self.btn_download_channel = QPushButton("⬇  Download Channel")
         self.btn_download_channel.setObjectName("btn_success")
+        self.btn_stop_channel = QPushButton("⏹  Stop Download")
+        self.btn_stop_channel.setObjectName("btn_danger")
+        self.btn_stop_channel.setVisible(False)
         self.btn_refresh_channel = QPushButton("🔄  Refresh")
         self.btn_refresh_channel.setObjectName("btn_primary")
+        self.btn_edit_channel = QPushButton("✏  Edit Channel")
         self.btn_retry_errors = QPushButton("↩  Retry Errors")
         self.btn_open_folder = QPushButton("📁  Open Folder")
         self.btn_delete_channel = QPushButton("🗑  Delete")
         self.btn_delete_channel.setObjectName("btn_danger")
 
-        for b in (self.btn_download_channel, self.btn_refresh_channel,
-                  self.btn_retry_errors, self.btn_open_folder, self.btn_delete_channel):
+        for b in (self.btn_download_channel, self.btn_stop_channel, self.btn_refresh_channel,
+                  self.btn_edit_channel, self.btn_retry_errors, self.btn_open_folder, self.btn_delete_channel):
             btn_row.addWidget(b)
         btn_row.addStretch()
         right_layout.addLayout(btn_row)
@@ -705,6 +793,43 @@ class MainWindow(QMainWindow):
         self.videos_table.verticalHeader().setVisible(False)
         self.videos_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         right_layout.addWidget(self.videos_table)
+
+        # ── Pagination bar ───────────────────────────
+        pg_bar = QHBoxLayout()
+
+        self.btn_first_page = QPushButton("⏮")
+        self.btn_first_page.setFixedWidth(32)
+        self.btn_prev_page = QPushButton("◀")
+        self.btn_prev_page.setFixedWidth(32)
+        self.lbl_page_info = QLabel("Page 1 / 1")
+        self.lbl_page_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_page_info.setFixedWidth(100)
+        self.btn_next_page = QPushButton("▶")
+        self.btn_next_page.setFixedWidth(32)
+        self.btn_last_page = QPushButton("⏭")
+        self.btn_last_page.setFixedWidth(32)
+
+        pg_bar.addWidget(self.btn_first_page)
+        pg_bar.addWidget(self.btn_prev_page)
+        pg_bar.addWidget(self.lbl_page_info)
+        pg_bar.addWidget(self.btn_next_page)
+        pg_bar.addWidget(self.btn_last_page)
+        pg_bar.addSpacing(16)
+
+        pg_bar.addWidget(QLabel("Per page:"))
+        self.page_size_combo = QComboBox()
+        self.page_size_combo.addItems(["25", "50", "100", "200"])
+        self.page_size_combo.setCurrentIndex(1)   # default 50
+        self.page_size_combo.setFixedWidth(70)
+        pg_bar.addWidget(self.page_size_combo)
+        pg_bar.addSpacing(16)
+
+        self.lbl_total_videos = QLabel("0 videos")
+        self.lbl_total_videos.setObjectName("stat_badge")
+        pg_bar.addWidget(self.lbl_total_videos)
+        pg_bar.addStretch()
+
+        right_layout.addLayout(pg_bar)
 
         splitter.addWidget(right)
         splitter.setSizes([280, 820])

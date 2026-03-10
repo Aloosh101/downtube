@@ -100,8 +100,10 @@ class DBManager:
 
         # Safe migrations (idempotent)
         for col, definition in [
-            ("audio_only",  "INTEGER DEFAULT 0"),
-            ("custom_path", "TEXT"),
+            ("audio_only",      "INTEGER DEFAULT 0"),
+            ("custom_path",     "TEXT"),
+            ("video_quality",   "TEXT DEFAULT ''"),
+            ("audio_bitrate",   "TEXT DEFAULT ''"),
         ]:
             try:
                 cursor.execute(f"ALTER TABLE Channels ADD COLUMN {col} {definition}")
@@ -177,6 +179,27 @@ class DBManager:
         conn.commit()
         conn.close()
 
+    def update_channel_quality(self, channel_id: int, video_quality: str = "", audio_bitrate: str = ""):
+        """Set per-channel video resolution or audio bitrate override."""
+        conn = self._get_connection()
+        conn.execute(
+            "UPDATE Channels SET video_quality = ?, audio_bitrate = ? WHERE id = ?",
+            (video_quality, audio_bitrate, channel_id),
+        )
+        conn.commit()
+        conn.close()
+
+    def update_channel_settings(self, channel_id: int, audio_only: bool, custom_path: str | None,
+                                video_quality: str = "", audio_bitrate: str = ""):
+        """Update all editable channel properties."""
+        conn = self._get_connection()
+        conn.execute(
+            "UPDATE Channels SET audio_only = ?, custom_path = ?, video_quality = ?, audio_bitrate = ? WHERE id = ?",
+            (int(audio_only), custom_path, video_quality, audio_bitrate, channel_id),
+        )
+        conn.commit()
+        conn.close()
+
     def delete_channel(self, channel_id: int):
         """Delete a channel and all its videos from the database."""
         conn = self._get_connection()
@@ -249,10 +272,12 @@ class DBManager:
         channels = self.get_all_channels()
         data = [
             {
-                "name":        c["name"],
-                "url":         c["url"],
-                "audio_only":  c.get("audio_only", 0),
-                "custom_path": c.get("custom_path"),
+                "name":          c["name"],
+                "url":           c["url"],
+                "audio_only":    c.get("audio_only", 0),
+                "custom_path":   c.get("custom_path"),
+                "video_quality": c.get("video_quality", ""),
+                "audio_bitrate": c.get("audio_bitrate", ""),
             }
             for c in channels
         ]

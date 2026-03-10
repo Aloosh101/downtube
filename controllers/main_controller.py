@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from views.main_window import (
-    AddChannelDialog, AddSingleVideoDialog, ChannelCardWidget, MainWindow,
+    AddChannelDialog, AddSingleVideoDialog, EditChannelDialog, ChannelCardWidget, MainWindow,
 )
 from models.db_manager import DBManager
 from core.engine import DownloadEngine
@@ -98,6 +98,8 @@ class MainController(QObject):
         self.active_downloads: dict[int, DownloadWorker] = {}   # channel_id → worker
         self.current_channel_id: int | None = None
         self._all_videos_cache: list[dict]  = []
+        self._filtered_videos_cache: list[dict] = []
+        self._current_page: int = 0
 
     # ═══════════════════════════════════════════
     #  Connections
@@ -127,9 +129,18 @@ class MainController(QObject):
         v.video_search.textChanged.connect(self._filter_videos_table)
         v.status_filter.currentTextChanged.connect(self._filter_videos_table)
 
+        # Pagination
+        v.btn_first_page.clicked.connect(lambda: self._go_to_page(0))
+        v.btn_prev_page.clicked.connect(lambda: self._go_to_page(self._current_page - 1))
+        v.btn_next_page.clicked.connect(lambda: self._go_to_page(self._current_page + 1))
+        v.btn_last_page.clicked.connect(lambda: self._go_to_page(self._total_pages() - 1))
+        v.page_size_combo.currentTextChanged.connect(lambda _: self._go_to_page(0))
+
         # Channel actions
         v.btn_download_channel.clicked.connect(self._download_current_channel)
+        v.btn_stop_channel.clicked.connect(self._stop_current_channel)
         v.btn_refresh_channel.clicked.connect(self._refresh_current_channel)
+        v.btn_edit_channel.clicked.connect(self._edit_current_channel)
         v.btn_retry_errors.clicked.connect(self._retry_errors)
         v.btn_open_folder.clicked.connect(self._open_channel_folder)
         v.btn_delete_channel.clicked.connect(self._delete_current_channel)
@@ -266,6 +277,7 @@ class MainController(QObject):
         menu = QMenu(self.view)
         menu.addAction("⬇  Download",       lambda: self._download_channel(channel_id))
         menu.addAction("🔄  Refresh",        lambda: self._refresh_channel(channel_id))
+        menu.addAction("✏  Edit Channel",   lambda: self._edit_channel_by_id(channel_id))
         menu.addAction("↩  Retry Errors",   lambda: self._retry_errors_by_id(channel_id))
         menu.addAction("📁  Open Folder",    lambda: self._open_folder_by_id(channel_id))
         menu.addSeparator()
@@ -288,7 +300,11 @@ class MainController(QObject):
         if not ch:
             return
         stats = self.db.get_channel_stats(cid)
-        self.view.lbl_channel_name.setText(f"<b>{ch['name']}</b>")
+        is_audio = ch.get("audio_only", 0) == 1
+        is_dl    = cid in self.active_downloads
+
+        mode_badge = "🎵 Audio" if is_audio else "🎬 Video"
+        self.view.lbl_channel_name.setText(f"<b>{ch['name']}</b>  {mode_badge}")
         self.view.lbl_stats.setText(
             f"📥 {stats['completed']}  ⏳ {stats['pending']}  ❌ {stats['error']}  📊 {stats['total']}"
         )
@@ -296,34 +312,72 @@ class MainController(QObject):
         self.view.channel_progress.setRange(0, total)
         self.view.channel_progress.setValue(stats["completed"])
 
-        is_dl = cid in self.active_downloads
-        self.view.btn_download_channel.setEnabled(not is_dl)
+        # Toggle download / stop buttons
+        self.view.btn_download_channel.setVisible(not is_dl)
+        self.view.btn_stop_channel.setVisible(is_dl)
 
         self._all_videos_cache = self.db.get_videos_for_channel(cid)
         self._filter_videos_table()
 
     def _filter_videos_table(self):
+        """Apply search/status filter and reset to page 0."""
         query      = self.view.video_search.text().lower()
         status_flt = self.view.status_filter.currentText()
-        videos = self._all_videos_cache
 
-        filtered = [
-            v for v in videos
-            if (query in v["title"].lower() or not query)
+        self._filtered_videos_cache = [
+            v for v in self._all_videos_cache
+            if (not query or query in v["title"].lower())
             and (status_flt == "All" or v["status"] == status_flt)
         ]
+        self._current_page = 0
+        self._render_table_page()
 
+    def _total_pages(self) -> int:
+        page_size = int(self.view.page_size_combo.currentText())
+        total     = len(self._filtered_videos_cache)
+        return max(1, (total + page_size - 1) // page_size)
+
+    def _go_to_page(self, page: int):
+        total = self._total_pages()
+        self._current_page = max(0, min(page, total - 1))
+        self._render_table_page()
+
+    def _render_table_page(self):
+        """Render only the current page slice into the table — O(page_size) not O(total)."""
+        from PySide6.QtGui import QColor
+
+        page_size = int(self.view.page_size_combo.currentText())
+        total     = len(self._filtered_videos_cache)
+        start     = self._current_page * page_size
+        end       = min(start + page_size, total)
+        page      = self._filtered_videos_cache[start:end]
+        n_pages   = self._total_pages()
+
+        # Update pagination controls
+        self.view.lbl_page_info.setText(f"Page {self._current_page + 1} / {n_pages}")
+        self.view.lbl_total_videos.setText(
+            f"{total} video{'s' if total != 1 else ''}  (showing {start+1}–{end})"
+            if total else "0 videos"
+        )
+        self.view.btn_first_page.setEnabled(self._current_page > 0)
+        self.view.btn_prev_page.setEnabled(self._current_page > 0)
+        self.view.btn_next_page.setEnabled(self._current_page < n_pages - 1)
+        self.view.btn_last_page.setEnabled(self._current_page < n_pages - 1)
+
+        # Fill the table with only the visible slice
         tbl = self.view.videos_table
-        tbl.setRowCount(len(filtered))
-        for row, vid in enumerate(filtered):
+        tbl.setUpdatesEnabled(False)          # batch paint
+        tbl.setRowCount(len(page))
+        for row, vid in enumerate(page):
             tbl.setItem(row, 0, QTableWidgetItem(vid["video_id"]))
             tbl.setItem(row, 1, QTableWidgetItem(vid["title"]))
             tbl.setItem(row, 2, QTableWidgetItem(vid["url"]))
             status_item = QTableWidgetItem(vid["status"])
             colour = STATUS_COLORS.get(vid["status"], "")
             if colour:
-                status_item.setForeground(__import__("PySide6.QtGui", fromlist=["QColor"]).QColor(colour))
+                status_item.setForeground(QColor(colour))
             tbl.setItem(row, 3, status_item)
+        tbl.setUpdatesEnabled(True)
 
     def _videos_context_menu(self, pos):
         row = self.view.videos_table.rowAt(pos.y())
@@ -422,6 +476,59 @@ class MainController(QObject):
         if self.current_channel_id is not None:
             self._download_channel(self.current_channel_id)
 
+    def _stop_current_channel(self):
+        """Stop the currently downloading channel."""
+        cid = self.current_channel_id
+        if cid is None or cid not in self.active_downloads:
+            return
+        worker = self.active_downloads[cid]
+        worker.stop()
+        self._log(f"Stopping download for channel id={cid}…", "warning")
+        self.view.statusBar().showMessage("Stopping download…")
+
+    def _edit_current_channel(self):
+        """Open the edit dialog to modify channel settings."""
+        cid = self.current_channel_id
+        if cid is None:
+            return
+        ch = self.db.get_channel_by_id(cid)
+        if not ch:
+            return
+        dlg = EditChannelDialog(ch, parent=self.view)
+        if dlg.exec():
+            data = dlg.get_data()
+            self.db.update_channel_settings(
+                cid,
+                audio_only=data["audio_only"],
+                custom_path=data["custom_path"],
+                video_quality=data["video_quality"],
+                audio_bitrate=data["audio_bitrate"],
+            )
+            self._log(f"Updated settings for '{ch['name']}'.", "success")
+            self.view.statusBar().showMessage("Channel settings saved.", 4000)
+            self._refresh_channels_list()
+            self._reload_channel_detail()
+
+    def _edit_channel_by_id(self, channel_id: int):
+        """Open edit dialog for a specific channel (used from context menu)."""
+        ch = self.db.get_channel_by_id(channel_id)
+        if not ch:
+            return
+        dlg = EditChannelDialog(ch, parent=self.view)
+        if dlg.exec():
+            data = dlg.get_data()
+            self.db.update_channel_settings(
+                channel_id,
+                audio_only=data["audio_only"],
+                custom_path=data["custom_path"],
+                video_quality=data["video_quality"],
+                audio_bitrate=data["audio_bitrate"],
+            )
+            self._log(f"Updated settings for '{ch['name']}'.", "success")
+            self._refresh_channels_list()
+            if self.current_channel_id == channel_id:
+                self._reload_channel_detail()
+
     def _download_channel(self, channel_id: int):
         if channel_id in self.active_downloads:
             self.view.statusBar().showMessage("This channel is already downloading.")
@@ -447,29 +554,50 @@ class MainController(QObject):
         self._log(f"Started download for '{ch['name']}'.")
         self._refresh_channels_list()
         if self.current_channel_id == channel_id:
-            self.view.btn_download_channel.setEnabled(False)
+            self.view.btn_download_channel.setVisible(False)
+            self.view.btn_stop_channel.setVisible(True)
 
     def _on_video_started(self, channel_id: int, video_id: str):
+        self._update_video_status_in_cache(video_id, "downloading")
         if self.current_channel_id == channel_id:
             self.view.lbl_current_video.setText(f"⬇ Downloading: {video_id}")
+            self._update_visible_table_row(video_id, "downloading")
 
     def _on_video_downloaded(self, channel_id: int, video_id: str):
-        # Update table row in-place
+        self._update_video_status_in_cache(video_id, "completed")
         if self.current_channel_id == channel_id:
-            tbl = self.view.videos_table
-            from PySide6.QtGui import QColor
-            for row in range(tbl.rowCount()):
-                if tbl.item(row, 0) and tbl.item(row, 0).text() == video_id:
-                    item = QTableWidgetItem("completed")
-                    item.setForeground(QColor(STATUS_COLORS["completed"]))
-                    tbl.setItem(row, 3, item)
-                    break
-            # Update stats label
+            self._update_visible_table_row(video_id, "completed")
+            
+            # Update stats label and progress
             stats = self.db.get_channel_stats(channel_id)
             self.view.lbl_stats.setText(
                 f"📥 {stats['completed']}  ⏳ {stats['pending']}  ❌ {stats['error']}  📊 {stats['total']}"
             )
             self.view.channel_progress.setValue(stats["completed"])
+            self.view.lbl_current_video.setText("")
+
+    def _update_video_status_in_cache(self, video_id: str, status: str):
+        """Update status in all cache lists so pagination stays in sync."""
+        for v in self._all_videos_cache:
+            if v["video_id"] == video_id:
+                v["status"] = status
+        for v in self._filtered_videos_cache:
+            if v["video_id"] == video_id:
+                v["status"] = status
+
+    def _update_visible_table_row(self, video_id: str, status: str):
+        """Update the row only if it's currently visible on the active page."""
+        tbl = self.view.videos_table
+        from PySide6.QtGui import QColor
+        for row in range(tbl.rowCount()):
+            item0 = tbl.item(row, 0)
+            if item0 and item0.text() == video_id:
+                status_item = QTableWidgetItem(status)
+                colour = STATUS_COLORS.get(status, "")
+                if colour:
+                    status_item.setForeground(QColor(colour))
+                tbl.setItem(row, 3, status_item)
+                break
             self.view.lbl_current_video.setText("")
 
     def _on_download_finished(self, channel_id: int):
@@ -482,7 +610,8 @@ class MainController(QObject):
         self._refresh_channels_list()
 
         if self.current_channel_id == channel_id:
-            self.view.btn_download_channel.setEnabled(True)
+            self.view.btn_download_channel.setVisible(True)
+            self.view.btn_stop_channel.setVisible(False)
             self.view.lbl_current_video.setText("")
             self._reload_channel_detail()
 

@@ -195,6 +195,13 @@ class DownloadWorker(QThread):
             channel_name = channel["name"]
             audio_only   = channel.get("audio_only", 0) == 1
             custom_path  = channel.get("custom_path") or None
+            # Per-channel quality overrides
+            res_override     = channel.get("video_quality", "") or None
+            bitrate_override = channel.get("audio_bitrate", "") or None
+            if res_override == "channel default":
+                res_override = None
+            if bitrate_override == "channel default":
+                bitrate_override = None
 
             pending = [v for v in self.db.get_videos_for_channel(self.channel_id)
                        if v["status"] == "pending"]
@@ -220,6 +227,8 @@ class DownloadWorker(QThread):
                     channel_name,
                     audio_only=audio_only,
                     custom_path=custom_path,
+                    res_override=res_override,
+                    bitrate_override=bitrate_override,
                 )
 
                 # ── progress hook ─────────────────────────────
